@@ -1,7 +1,14 @@
-use std::fs;
+use std::{
+    env,
+    fs::{self, File},
+    io::{BufRead, BufReader},
+    path::Path,
+};
 
 use clap::Parser;
 use color_eyre::eyre::{Context, ContextCompat, Result};
+use futures::StreamExt;
+use regex::Regex;
 use reqwest::{self, Client};
 use serde::Deserialize;
 use serde_xml_rs::from_reader;
@@ -19,6 +26,8 @@ struct Opts {
 enum SubCommand {
     #[clap()]
     Outdated(Outdated),
+    #[clap()]
+    RequiredMacros(RequiredMacros),
 }
 
 #[derive(Parser)]
@@ -26,6 +35,9 @@ struct Outdated {
     #[clap(short = 'n', long)]
     show_packages_not_found: bool,
 }
+
+#[derive(Parser)]
+struct RequiredMacros {}
 
 #[derive(Deserialize)]
 struct ProjectRepo {
@@ -141,6 +153,63 @@ async fn process_outdated(opts: Outdated, config: Config) -> Result<()> {
     Ok(())
 }
 
+fn get_pkg_name() -> Result<String> {
+    let path = env::current_dir()
+        .context("unable to get current directory")?
+        .as_os_str()
+        .to_str()
+        .context("unable to convert to string")?
+        .to_owned();
+    // all the paths are ./pkg.SLE_VERSION
+    // skip the starting prefix ./
+    let mut split = Path::new(&path)
+        .file_name()
+        .context("unable to get directory name")?
+        .to_str()
+        .context("unable to get directory name")?
+        .split(".");
+
+    Ok(split.next().context("invalid directory name")?.to_string())
+}
+
+async fn print_required_macro(_: RequiredMacros) -> Result<()> {
+    let re = Regex::new(
+        r"BuildRequires: *((pkgconfig|user)\((?P<pkg>\w+(-\w*)*)\)|(?P<pkg2>\w.*(-\w.*))) *(((>?=)|<) .* .*)?",
+    )
+    .context("invalid regex")?;
+
+    let pkg_name = get_pkg_name().context("unable to get pkg name")?;
+    let spec_file = format!("{}.spec", pkg_name);
+
+    print!(
+        "{}",
+        BufReader::new(
+            File::open(&spec_file)
+                .with_context(|| format!("unable to open spec file {}", spec_file))?,
+        )
+        .lines()
+        .filter_map(|line| line.ok())
+        .filter_map(|line| -> Option<String> {
+            if let Some(cap) = re.captures(&line) {
+                if let Some(pkg) = cap.name("pkg") {
+                    Some(pkg.as_str().to_owned())
+                } else if let Some(pkg) = cap.name("pkg2") {
+                    Some(pkg.as_str().to_owned())
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        })
+        .filter(|pkg| pkg.contains("macro") || pkg.contains("rpm"))
+        .collect::<Vec<String>>()
+        .join(" ")
+    );
+
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let opts: Opts = Opts::parse();
@@ -158,5 +227,6 @@ async fn main() -> Result<()> {
 
     match opts.subcmd {
         SubCommand::Outdated(o) => process_outdated(o, config).await,
+        SubCommand::RequiredMacros(r) => print_required_macro(r).await,
     }
 }
