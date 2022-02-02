@@ -5,11 +5,14 @@ edition = "2018"
 
 [dependencies]
 base64 = "0.13.0"
-color-eyre = "0.5"
-clap = "3.0.0-beta.2"
-reqwest = { version = "0.11", features = ["json"] }
-serde = { version = "1.0", features = ["derive"] }
-serde-xml-rs = "0.4.1"
-tokio = { version = "1", features = ["full"] }
-toml = "0.5"
-xdg = "2.1"
+color-eyre = "0.6.0"
+clap = { version = "3.0.14", features = ["derive"] }
+futures = "0.3.19"
+regex = "1.5.4"
+reqwest = { version = "0.11.9", features = ["json"] }
+serde = { version = "1.0.136", features = ["derive"] }
+serde-xml-rs = "0.5.1"
+tokio = { version = "1.16.1", features = ["full"] }
+tokio-stream = "0.1.8"
+toml = "0.5.8"
+xdg = "2.4.0"

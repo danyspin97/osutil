@@ -1,6 +1,6 @@
 use std::fs;
 
-use clap::Clap;
+use clap::Parser;
 use color_eyre::eyre::{Context, ContextCompat, Result};
 use reqwest::{self, Client};
 use serde::Deserialize;
@@ -8,20 +8,20 @@ use serde_xml_rs::from_reader;
 use toml;
 use xdg::BaseDirectories;
 
-#[derive(Clap)]
+#[derive(Parser)]
 #[clap(version = "0.1", author = "Danilo Spinella <danilo.spinella@suse.com>")]
 struct Opts {
     #[clap(subcommand)]
     subcmd: SubCommand,
 }
 
-#[derive(Clap)]
+#[derive(Parser)]
 enum SubCommand {
     #[clap()]
     Outdated(Outdated),
 }
 
-#[derive(Clap)]
+#[derive(Parser)]
 struct Outdated {
     #[clap(short = 'n', long)]
     show_packages_not_found: bool,
