@@ -90,38 +90,54 @@ async fn get_maintained_pkgs(config: Config) -> Result<Vec<String>> {
         .collect::<Vec<String>>())
 }
 
-async fn process_outdated(opts: Outdated, config: Config) -> Result<()> {
-    for pkg in get_maintained_pkgs(config).await? {
-        let repos = reqwest::get(format!("https://repology.org/api/v1/project/{}", pkg))
-            .await
-            .with_context(|| {
-                format!(
-                    "unable to get project information from repology for package {}",
-                    pkg
-                )
-            })?
-            .json::<Vec<ProjectRepo>>()
-            .await
-            .with_context(|| format!("unable to deserialize json for package {}", pkg))?;
-        let tw_repo = repos
-            .iter()
-            .find(|project_repo| project_repo.repo == "opensuse_tumbleweed");
-        if let Some(tw_repo) = tw_repo {
-            if tw_repo.status == "outdated" {
-                let newest_version = repos
-                    .iter()
-                    .find(|repo| repo.status == "newest")
-                    .map(|repo| repo.version.to_owned())
-                    .unwrap_or("?".to_string());
-                println!("{}: {} -> {}", pkg, tw_repo.version, newest_version);
-            }
-        } else {
-            if opts.show_packages_not_found {
-                println!("Could not find package {}", pkg);
-            }
-            continue;
+async fn handle_pkg((pkg, client, show_packages_not_found): (String, &Client, bool)) -> Result<()> {
+    let repos = client
+        .get(format!("https://repology.org/api/v1/project/{}", pkg))
+        .send()
+        .await
+        .with_context(|| {
+            format!(
+                "unable to get project information from repology for package {}",
+                pkg
+            )
+        })?
+        .json::<Vec<ProjectRepo>>()
+        .await
+        .with_context(|| format!("unable to deserialize json for package {}", pkg))?;
+    let tw_repo = repos
+        .iter()
+        .find(|project_repo| project_repo.repo == "opensuse_tumbleweed");
+    if let Some(tw_repo) = tw_repo {
+        if tw_repo.status == "outdated" {
+            let newest_version = repos
+                .iter()
+                .find(|repo| repo.status == "newest")
+                .map(|repo| repo.version.to_owned())
+                .unwrap_or("?".to_string());
+            println!("{}: {} -> {}", pkg, tw_repo.version, newest_version);
+        }
+    } else {
+        if show_packages_not_found {
+            println!("Could not find package {}", pkg);
         }
     }
+
+    Ok(())
+}
+
+async fn process_outdated(opts: Outdated, config: Config) -> Result<()> {
+    let client = Client::new();
+    tokio_stream::iter(get_maintained_pkgs(config).await?)
+        .map(|pkg| (pkg, &client, opts.show_packages_not_found))
+        .map(handle_pkg)
+        .buffer_unordered(4)
+        .for_each(|res| async {
+            match res {
+                Ok(_) => {}
+                Err(err) => eprintln!("{}", err),
+            }
+        })
+        .await;
     Ok(())
 }
 
