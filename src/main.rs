@@ -34,6 +34,8 @@ enum SubCommand {
 struct Outdated {
     #[clap(short = 'n', long)]
     show_packages_not_found: bool,
+    #[clap(long = "leap")]
+    leap_ver: Option<String>,
 }
 
 #[derive(Parser)]
@@ -102,7 +104,9 @@ async fn get_maintained_pkgs(config: Config) -> Result<Vec<String>> {
         .collect::<Vec<String>>())
 }
 
-async fn handle_pkg((pkg, client, show_packages_not_found): (String, &Client, bool)) -> Result<()> {
+async fn handle_pkg(
+    (pkg, client, show_packages_not_found, leap_ver): (String, &Client, bool, &Option<String>),
+) -> Result<()> {
     let repos = client
         .get(format!("https://repology.org/api/v1/project/{}", pkg))
         .send()
@@ -119,14 +123,23 @@ async fn handle_pkg((pkg, client, show_packages_not_found): (String, &Client, bo
     let tw_repo = repos
         .iter()
         .find(|project_repo| project_repo.repo == "opensuse_tumbleweed");
+    let newest_version = repos
+        .iter()
+        .find(|repo| repo.status == "newest")
+        .map(|repo| repo.version.to_owned())
+        .unwrap_or("?".to_string());
     if let Some(tw_repo) = tw_repo {
-        if tw_repo.status == "outdated" {
-            let newest_version = repos
-                .iter()
-                .find(|repo| repo.status == "newest")
-                .map(|repo| repo.version.to_owned())
-                .unwrap_or("?".to_string());
-            println!("{}: {} -> {}", pkg, tw_repo.version, newest_version);
+        if let Some(leap_ver) = leap_ver {
+            let leap_repo = repos.iter().find(|project_repo| {
+                project_repo.repo == format!("opensuse_leap_{}", leap_ver.replace('.', "_"))
+            });
+            if let Some(leap_repo) = leap_repo {
+                println!("{}: {} -> {}", pkg, leap_repo.version, newest_version);
+            }
+        } else {
+            if tw_repo.status == "outdated" {
+                println!("{}: {} -> {}", pkg, tw_repo.version, newest_version);
+            }
         }
     } else {
         if show_packages_not_found {
@@ -140,7 +153,7 @@ async fn handle_pkg((pkg, client, show_packages_not_found): (String, &Client, bo
 async fn process_outdated(opts: Outdated, config: Config) -> Result<()> {
     let client = Client::new();
     tokio_stream::iter(get_maintained_pkgs(config).await?)
-        .map(|pkg| (pkg, &client, opts.show_packages_not_found))
+        .map(|pkg| (pkg, &client, opts.show_packages_not_found, &opts.leap_ver))
         .map(handle_pkg)
         .buffer_unordered(4)
         .for_each(|res| async {
