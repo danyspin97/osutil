@@ -2,7 +2,7 @@ use std::{
     env,
     fs::{self, File},
     io::{BufRead, BufReader},
-    path::Path,
+    path::{Path, PathBuf},
 };
 
 use clap::Parser;
@@ -14,6 +14,31 @@ use serde::Deserialize;
 use serde_xml_rs::from_reader;
 use toml;
 use xdg::BaseDirectories;
+
+static API: &'static str = "https://api.opensuse.org";
+
+#[macro_use]
+extern crate lazy_static;
+
+lazy_static! {
+    static ref XDG: BaseDirectories = BaseDirectories::with_prefix("osutil")
+        .context("unable to initialize XDG Base Directories")
+        .unwrap();
+    static ref CONFIG_FILE: PathBuf = XDG
+        .place_config_file("osutil.conf")
+        .context("unable to get config file")
+        .unwrap();
+    static ref CONFIG: Config = toml::from_str(
+        &fs::read_to_string(&CONFIG_FILE.as_os_str())
+            .with_context(|| format!("unable to read file {:?}", CONFIG_FILE.to_string_lossy()))
+            .unwrap()
+    )
+    .with_context(|| format!(
+        "unable to parse config file {:?}",
+        CONFIG_FILE.to_string_lossy()
+    ))
+    .unwrap();
+}
 
 #[derive(Parser)]
 #[clap(version = "0.1", author = "Danilo Spinella <danilo.spinella@suse.com>")]
@@ -73,20 +98,19 @@ struct Config {
     password: String,
 }
 
-async fn get_maintained_pkgs(config: Config) -> Result<Vec<String>> {
+async fn get_maintained_pkgs() -> Result<Vec<String>> {
     let client = Client::new();
 
-    let api = "https://api.opensuse.org";
     let text = client
         .get(format!(
             "{}/search/package/id?match=person/@userid+=+'{}'+and+person/@role+=+'maintainer'",
-            api, config.username
+            API, CONFIG.username
         ))
         .header(
             "Authorization",
             format!(
                 "Basic {}",
-                base64::encode(format!("{}:{}", config.username, config.password))
+                base64::encode(format!("{}:{}", CONFIG.username, CONFIG.password))
             ),
         )
         .send()
@@ -150,9 +174,9 @@ async fn handle_pkg(
     Ok(())
 }
 
-async fn process_outdated(opts: Outdated, config: Config) -> Result<()> {
+async fn process_outdated(opts: Outdated) -> Result<()> {
     let client = Client::new();
-    tokio_stream::iter(get_maintained_pkgs(config).await?)
+    tokio_stream::iter(get_maintained_pkgs().await?)
         .map(|pkg| (pkg, &client, opts.show_packages_not_found, &opts.leap_ver))
         .map(handle_pkg)
         .buffer_unordered(4)
@@ -227,19 +251,8 @@ async fn print_required_macro(_: RequiredMacros) -> Result<()> {
 async fn main() -> Result<()> {
     let opts: Opts = Opts::parse();
 
-    let xdg = BaseDirectories::with_prefix("osutil")
-        .context("unable to initialize XDG Base Directories")?;
-    let config_file = xdg
-        .place_config_file("osutil.conf")
-        .context("unable to get config file")?;
-    let config = toml::from_str(
-        &fs::read_to_string(&config_file)
-            .with_context(|| format!("unable to read file {:?}", config_file))?,
-    )
-    .with_context(|| format!("unable to parse config file {:?}", config_file))?;
-
     match opts.subcmd {
-        SubCommand::Outdated(o) => process_outdated(o, config).await,
+        SubCommand::Outdated(o) => process_outdated(o).await,
         SubCommand::RequiredMacros(r) => print_required_macro(r).await,
     }
 }
