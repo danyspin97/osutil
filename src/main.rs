@@ -80,16 +80,35 @@ struct ProjectRepo {
 }
 
 #[derive(Deserialize)]
-struct ObsPackage {
+struct ObsSearchPackage {
     project: String,
     name: String,
 }
 
 #[derive(Deserialize)]
-struct ObsCollection {
+struct ObsSearchCollection {
     matches: String,
     #[serde(rename = "package")]
-    packages: Vec<ObsPackage>,
+    packages: Vec<ObsSearchPackage>,
+}
+
+#[derive(Deserialize)]
+struct ObsSourcePackage {
+    project: String,
+    package: String,
+    target: ObsSourceTarget,
+}
+
+#[derive(Deserialize)]
+struct ObsSourceTarget {
+    project: String,
+    package: String,
+}
+
+#[derive(Deserialize)]
+struct ObsSourceCollection {
+    #[serde(rename = "package")]
+    packages: Vec<ObsSourcePackage>,
 }
 
 #[derive(Deserialize)]
@@ -120,7 +139,7 @@ async fn get_maintained_pkgs() -> Result<Vec<String>> {
         .await
         .context("unable to get maintained projects")?;
 
-    let collection: ObsCollection = from_reader(text.as_bytes())?;
+    let collection: ObsSearchCollection = from_reader(text.as_bytes())?;
     Ok(collection
         .packages
         .iter()
@@ -158,7 +177,38 @@ async fn handle_pkg(
                 project_repo.repo == format!("opensuse_leap_{}", leap_ver.replace('.', "_"))
             });
             if let Some(leap_repo) = leap_repo {
-                println!("{}: {} -> {}", pkg, leap_repo.version, newest_version);
+                if leap_repo.version != newest_version {
+                    let text = client
+                        .post(format!(
+            "{}/source?cmd=branch&dryrun=1&package={}&update_project_attribute=OBS:UpdateProject",
+            API, pkg
+                        ))
+                        .header(
+                            "Authorization",
+                            format!(
+                                "Basic {}",
+                                base64::encode(format!("{}:{}", CONFIG.username, CONFIG.password))
+                            ),
+                        )
+                        .send()
+                        .await
+                        .context("unable to get maintained projects")?
+                        .text()
+                        .await
+                        .unwrap();
+
+                    let collection: ObsSourceCollection = from_reader(text.as_bytes())?;
+                    let alias = match leap_ver.as_str() {
+                        "15.4" => "SLE-15-SP4",
+                        _ => unimplemented!(),
+                    };
+                    let from_backports = collection.packages.iter().find(|obs_package| {
+                        obs_package.project == format!("openSUSE:Backports:{alias}")
+                    });
+                    if from_backports.is_some() {
+                        println!("{}: {} -> {}", pkg, leap_repo.version, newest_version);
+                    }
+                }
             }
         } else {
             if tw_repo.status == "outdated" {
