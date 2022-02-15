@@ -198,14 +198,36 @@ async fn handle_pkg(
                         .unwrap();
 
                     let collection: ObsSourceCollection = from_reader(text.as_bytes())?;
-                    let alias = match leap_ver.as_str() {
-                        "15.4" => "SLE-15-SP4",
+                    let data = match leap_ver.as_str() {
+                        "15.4" => ("SLE-15-SP4", vec!["SLE-15-SP3:Update", "SLE-15-SP2:Update"]),
                         _ => unimplemented!(),
                     };
-                    let from_backports = collection.packages.iter().find(|obs_package| {
-                        obs_package.project == format!("openSUSE:Backports:{alias}")
-                    });
-                    if from_backports.is_some() {
+
+                    let from_latest_sle = collection
+                        .packages
+                        .iter()
+                        .find(|obs_package| obs_package.project == format!("SUSE:{}", data.0))
+                        .is_some();
+                    let from_latest_backports = collection
+                        .packages
+                        .iter()
+                        .find(|obs_package| {
+                            obs_package.project == format!("openSUSE:Backports:{}", data.0)
+                        })
+                        .is_some();
+                    let from_older_backports = collection
+                        .packages
+                        .iter()
+                        .find(|obs_package| {
+                            data.1
+                                .iter()
+                                .find(|ver| {
+                                    obs_package.project == format!("openSUSE:Backports:{}", ver)
+                                })
+                                .is_some()
+                        })
+                        .is_some();
+                    if from_latest_backports || (!from_latest_sle && from_older_backports) {
                         println!("{}: {} -> {}", pkg, leap_repo.version, newest_version);
                     }
                 }
