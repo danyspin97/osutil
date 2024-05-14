@@ -150,14 +150,20 @@ async fn get_maintained_pkgs() -> Result<Vec<String>> {
 async fn handle_pkg(
     (pkg, client, show_packages_not_found, leap_ver): (String, &Client, bool, &Option<String>),
 ) -> Result<()> {
+    let repo_pkg = pkg.strip_prefix("python-").unwrap_or(&pkg);
     let repos = client
-        .get(format!("https://repology.org/api/v1/project/{}", pkg))
+        .get(format!("https://repology.org/api/v1/project/{}", repo_pkg))
         .send()
         .await
         .with_context(|| {
             format!(
-                "unable to get project information from repology for package {}",
-                pkg
+                "unable to get project information from repology for package {}{}",
+                pkg,
+                if repo_pkg != pkg {
+                    format!(", searched for {}", repo_pkg)
+                } else {
+                    "".to_string()
+                }
             )
         })?
         .json::<Vec<ProjectRepo>>()
